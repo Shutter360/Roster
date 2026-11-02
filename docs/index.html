@@ -173,7 +173,7 @@
     user: null,
     config: { appName: 'Roster', skills: [], blocks: [
       { key: 'morning', label: 'Morning' }, { key: 'evening', label: 'Evening' }] },
-    view: '',
+    view: '', refreshing: 0, booting: false,
     mine: null, draft: {}, dirty: false,
     overview: null, staff: null,
     jobs: null, jobWeek: 0, openJob: null, jobShowAll: false, confirmRemove: '', showOthers: false,
@@ -219,7 +219,45 @@
       });
   }
 
-  function signOutLocal() { S.token = ''; S.user = null; S.mine = null; S.overview = null; S.staff = null; localStorage.removeItem('roster_token'); }
+  function signOutLocal() {
+    S.token = ''; S.user = null; S.mine = null; S.overview = null; S.staff = null; S.jobs = null;
+    localStorage.removeItem('roster_token');
+    ['user', 'mine', 'jobs', 'overview'].forEach(function (k) { store(k, null); });
+  }
+
+  // Last-seen data is kept on this device so the app opens instantly, then refreshes in the background.
+  function store(key, val) {
+    try {
+      if (val === null) localStorage.removeItem('roster_c_' + key);
+      else localStorage.setItem('roster_c_' + key, JSON.stringify(val));
+    } catch (e) {}
+  }
+  function stored(key) {
+    try { var v = localStorage.getItem('roster_c_' + key); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+  }
+  function applyMine(d) {
+    S.mine = d; store('mine', d);
+    resetDraft(S.dirty);
+  }
+  function applyJobs(jobs, overview) {
+    if (jobs) { S.jobs = jobs; store('jobs', jobs); }
+    if (overview) applyOverview(overview);
+    if (S.jobs && !S.jobWeekPicked) { // first visit: open the first week that has jobs
+      S.jobWeekPicked = true;
+      var wks = weeks(S.jobs.dates);
+      for (var i = 0; i < wks.length; i++) if (jobsInWeek(wks[i]).length) { S.jobWeek = i; break; }
+    }
+  }
+  function applyOverview(d) {
+    S.overview = d; store('overview', d);
+    if (!S.freeDate || d.dates.indexOf(S.freeDate) < 0) S.freeDate = d.dates[0];
+  }
+  function applyBoot(d) {
+    S.user = d.user; S.config = d.config; store('user', { user: d.user, config: d.config });
+    if (d.mine) applyMine(d.mine);
+    if (d.jobs || d.overview) applyJobs(d.jobs, d.overview);
+    if (d.jobsError) toast(d.jobsError);
+  }
 
   // ------------------------------------------------------------ routing
   function tabsFor(user) {
@@ -232,40 +270,26 @@
     return [['mine', 'My availability'], ['account', 'Account']];
   }
 
-  function go(view) {
+  function go(view, noLoad) {
     if (view !== 'mine' && S.dirty && !confirm('You have unsaved changes. Leave without saving?')) return;
     if (view !== 'mine') S.dirty = false;
     S.view = view;
     S.editing = null;
     render();
-    load(view);
+    if (!noLoad) load(view);
+  }
+
+  // Shows whatever is already on screen straight away and refreshes quietly.
+  function refresh(promise) {
+    S.refreshing++; keepScroll(render);
+    return promise.then(function () { S.refreshing--; keepScroll(render); }, function (e) { S.refreshing--; keepScroll(render); showErr(e); });
   }
 
   function load(view) {
-    if (view === 'mine') {
-      return api('myAvailability').then(function (d) { S.mine = d; resetDraft(); render(); }).catch(showErr);
-    }
-    if (['grid', 'free', 'gaps', 'conflicts'].indexOf(view) >= 0) {
-      return api('adminOverview').then(function (d) {
-        S.overview = d;
-        if (!S.freeDate || d.dates.indexOf(S.freeDate) < 0) S.freeDate = d.dates[0];
-        render();
-      }).catch(showErr);
-    }
-    if (view === 'jobs') {
-      return Promise.all([api('adminJobs'), api('adminOverview', {}, true)]).then(function (res) {
-        S.jobs = res[0]; S.overview = res[1];
-        if (!S.jobWeekPicked) { // first visit: open the first week that has jobs
-          S.jobWeekPicked = true;
-          var wks = weeks(S.jobs.dates);
-          for (var i = 0; i < wks.length; i++) if (jobsInWeek(wks[i]).length) { S.jobWeek = i; break; }
-        }
-        render();
-      }).catch(showErr);
-    }
-    if (view === 'staff') {
-      return api('adminListStaff').then(function (d) { S.staff = d.staff; render(); }).catch(showErr);
-    }
+    if (view === 'mine') return refresh(api('myAvailability', {}, true).then(applyMine));
+    if (['grid', 'free', 'gaps', 'conflicts'].indexOf(view) >= 0) return refresh(api('adminOverview', {}, true).then(applyOverview));
+    if (view === 'jobs') return refresh(api('adminJobsPage', {}, true).then(function (d) { applyJobs(d.jobs, d.overview); }));
+    if (view === 'staff') return refresh(api('adminListStaff', {}, true).then(function (d) { S.staff = d.staff; }));
   }
 
   function showErr(e) { toast(e.message); }
@@ -275,13 +299,14 @@
     var root = $('#root');
     var params = new URLSearchParams(location.search);
     if (params.get('reset')) { root.innerHTML = viewReset(); return bindReset(params.get('reset')); }
+    if (!S.user && S.booting) { root.innerHTML = '<div class="auth-wrap"><p class="sub">Loading...</p></div>'; return; }
     if (!S.user) { root.innerHTML = S.view === 'forgot' ? viewForgot() : viewLogin(); return S.view === 'forgot' ? bindForgot() : bindLogin(); }
 
     document.title = S.config.appName;
     var tabs = tabsFor(S.user);
     var html = '<header class="top"><div class="top-row"><div class="brand">' + esc(S.config.appName) +
       '<small>' + (S.user.role === 'admin' ? 'Admin' : 'Staff') + '</small></div>' +
-      '<div class="who">' + esc(S.user.name) + '</div></div><nav class="tabs">' +
+      '<div class="who">' + esc(S.user.name) + (S.refreshing ? '<small style="display:block;color:#bdbdc4">Updating...</small>' : '') + '</div></div><nav class="tabs">' +
       tabs.map(function (t) { return '<button data-go="' + t[0] + '" class="' + (S.view === t[0] ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') +
       '</nav></header><main>';
 
@@ -323,10 +348,10 @@
     $('#toForgot').onclick = function () { S.view = 'forgot'; render(); };
     $('#login').onsubmit = function (e) {
       e.preventDefault();
-      api('login', { email: $('#em').value, password: $('#pw').value }).then(function (d) {
+      api('login', { email: $('#em').value, password: $('#pw').value, include: 'auto' }).then(function (d) {
         S.token = d.token; localStorage.setItem('roster_token', d.token);
-        S.user = d.user; S.config = d.config;
-        go(tabsFor(S.user)[0][0]);
+        applyBoot(d);
+        go(tabsFor(S.user)[0][0], true);
       }).catch(function (err) { $('#m').innerHTML = '<div class="msg err">' + esc(err.message) + '</div>'; });
     };
   }
@@ -367,13 +392,14 @@
   }
 
   // ------------------------------------------------------------ my availability
-  function resetDraft() {
+  function resetDraft(keepEdits) {
+    var old = keepEdits ? S.draft : {};
     S.draft = {};
     S.mine.dates.forEach(function (d) {
       var a = S.mine.avail[d];
-      S.draft[d] = { morning: a ? a.morning : null, evening: a ? a.evening : null };
+      S.draft[d] = old[d] || { morning: a ? a.morning : null, evening: a ? a.evening : null };
     });
-    S.dirty = false;
+    if (!keepEdits) S.dirty = false;
   }
 
   // A day counts as filled once any slot is marked Available or Not available (or is booked).
@@ -835,8 +861,27 @@
 
   // ------------------------------------------------------------ boot
   if (S.token && !new URLSearchParams(location.search).get('reset')) {
-    api('me').then(function (d) { S.user = d.user; S.config = d.config; go(tabsFor(S.user)[0][0]); })
-      .catch(function () { signOutLocal(); render(); });
+    // Open instantly with what this device saw last time, then refresh in one request.
+    var cached = stored('user');
+    if (cached) {
+      S.user = cached.user; S.config = cached.config;
+      var m = stored('mine'), j = stored('jobs'), o = stored('overview');
+      if (m) { S.mine = m; resetDraft(); }
+      if (j || o) applyJobs(j, o);
+      go(tabsFor(S.user)[0][0], true);
+    } else {
+      S.booting = true; render();
+    }
+    S.refreshing++; if (S.user) render();
+    api('me', { include: 'auto' }, true).then(function (d) {
+      S.booting = false; S.refreshing--;
+      var first = !S.user;
+      applyBoot(d);
+      if (first) go(tabsFor(S.user)[0][0], true); else keepScroll(render);
+    }).catch(function (e) {
+      S.booting = false; S.refreshing = 0;
+      if (e.code === 'AUTH' || !S.user) { signOutLocal(); render(); } else { render(); showErr(e); }
+    });
   } else {
     render();
     api('config', {}, true).then(function (c) { S.config = c; if (!S.user) render(); }).catch(function () {});
