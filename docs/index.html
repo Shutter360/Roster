@@ -458,7 +458,7 @@
       });
       html += '</section>';
     });
-    if (S.mine.lastSync) html += '<p class="sub">Booked jobs last updated ' + esc(S.mine.lastSync) + '.</p>';
+    if (S.mine.lastSync) html += '<p class="sub">Booked jobs last updated ' + esc(fmtStamp(S.mine.lastSync)) + '.</p>';
     return html;
   }
 
@@ -503,7 +503,7 @@
   function syncBar() {
     var o = S.overview;
     return '<div class="toolbar" style="justify-content:space-between"><span class="sub" style="margin:0">' +
-      (o && o.lastSync ? 'Calendar last synced ' + esc(o.lastSync) + (o.lastSyncResult ? ' (' + esc(o.lastSyncResult) + ')' : '') : 'Calendar not synced yet') +
+      (o && o.lastSync ? 'Calendar last synced ' + esc(fmtStamp(o.lastSync)) + (o.lastSyncResult ? ' (' + esc(o.lastSyncResult) + ')' : '') : 'Calendar not synced yet') +
       '</span><button class="btn ghost small" id="sync">Sync calendar now</button></div>';
   }
   function bindSync() {
@@ -529,7 +529,12 @@
   // ------------------------------------------------------------ admin: jobs
   function fmtTime(hm) {
     var h = +hm.slice(0, 2), m = hm.slice(3, 5);
-    return ((h % 12) || 12) + (m === '00' ? '' : ':' + m) + (h < 12 ? 'am' : 'pm');
+    return ((h % 12) || 12) + ':' + m + ' ' + (h < 12 ? 'AM' : 'PM');
+  }
+  // "2026-11-02 13:37" -> "Mon 2 Nov, 1:37 PM"
+  function fmtStamp(v) {
+    var m = String(v || '').match(/^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d)/);
+    return m ? fmtDay(m[1]) + ' ' + fmtDM(m[1]) + ', ' + fmtTime(m[2]) : String(v || '');
   }
   function jobCounts(j) {
     var acc = 0, wait = 0;
@@ -640,7 +645,7 @@
       html += '<h3>Not available, booked or not set (' + other.length + ') <button class="linkbtn" id="jothers" style="text-transform:none;letter-spacing:0">' + (S.showOthers ? 'Hide' : 'Show') + '</button></h3>';
       if (S.showOthers) html += other.map(function (it) { return row(it, false); }).join('');
     }
-    return html + '<p class="sub" style="margin:12px 0 0">Allocate adds them as a guest on the calendar event. Google emails them the invite. They show as Booked once they click Yes.</p></div>';
+    return html + '<p class="sub" style="margin:12px 0 0">Allocate adds them as a guest on the calendar event, so Google sends them an invite, and the app emails them the job details too. They show as Booked once they click Yes.</p></div>';
   }
 
   function bindJobs() {
@@ -658,7 +663,7 @@
       b.onclick = function () {
         var email = b.getAttribute('data-alloc');
         api('adminAllocate', { eventId: job.id, email: email }).then(function (r) {
-          toast(r.already ? nameOf(email) + ' is already on this job' : 'Invite sent to ' + nameOf(email));
+          toast(r.already ? nameOf(email) + ' is already on this job' : 'Invite' + (r.emailed ? ' and email' : '') + ' sent to ' + nameOf(email));
           return load('jobs');
         }).catch(showErr);
       };
