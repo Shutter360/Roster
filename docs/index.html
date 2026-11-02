@@ -132,6 +132,25 @@
   .checks label { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; margin: 0; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
   @media (max-width: 560px) { .row2 { grid-template-columns: 1fr; } .day { grid-template-columns: 76px 1fr; } }
+  /* Jobs */
+  .job { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px; display: grid;
+    grid-template-columns: 96px minmax(0, 1fr) auto; gap: 12px; align-items: center; cursor: pointer; }
+  .job:hover { border-color: #cfccc4; }
+  .job.open { border: 2px solid var(--ink); border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: 0; }
+  .job .when { font-weight: 600; font-size: 14px; }
+  .job .when small, .job .meta { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+  .job .t { font-weight: 600; }
+  .st { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .st.ok { background: var(--avail-bg); color: var(--avail); }
+  .st.wa { background: #fff4d6; color: #8a6100; }
+  .st.dg { background: var(--warn-bg); color: var(--warn); }
+  .st.mu { background: var(--no-bg); color: var(--muted); }
+  .alloc { background: #fff; border: 2px solid var(--ink); border-top: 0; border-radius: 0 0 var(--radius) var(--radius); padding: 4px 14px 14px; margin-bottom: 12px; }
+  .alloc h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin: 14px 0 4px; }
+  .arow { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .arow small { color: var(--muted); font-size: 12px; }
+  .warnline { font-size: 12px; color: #8a6100; margin-top: 3px; }
+  @media (max-width: 560px) { .job { grid-template-columns: 1fr; gap: 4px; } }
   .spinner { position: fixed; inset: 0; background: rgba(245,244,240,.6); display: grid; place-items: center; z-index: 50; }
   .spinner div { width: 34px; height: 34px; border: 3px solid var(--line); border-top-color: var(--ink); border-radius: 50%; animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -157,6 +176,7 @@
     view: '',
     mine: null, draft: {}, dirty: false,
     overview: null, staff: null,
+    jobs: null, jobWeek: 0, openJob: null, jobShowAll: false, confirmRemove: '', showOthers: false,
     gridWeek: 0, gridSkill: '', freeDate: '', freeBlock: '', freeSkill: '',
     editing: null
   };
@@ -204,7 +224,7 @@
   // ------------------------------------------------------------ routing
   function tabsFor(user) {
     if (user.role === 'admin') {
-      var t = [['grid', 'Availability grid'], ['free', "Who's free"], ['gaps', 'Gaps'], ['conflicts', 'Conflicts'], ['staff', 'Staff']];
+      var t = [['jobs', 'Jobs'], ['grid', 'Availability grid'], ['free', "Who's free"], ['gaps', 'Gaps'], ['conflicts', 'Conflicts'], ['staff', 'Staff']];
       if (user.rostered) t.push(['mine', 'My availability']);
       t.push(['account', 'Account']);
       return t;
@@ -232,6 +252,17 @@
         render();
       }).catch(showErr);
     }
+    if (view === 'jobs') {
+      return Promise.all([api('adminJobs'), api('adminOverview', {}, true)]).then(function (res) {
+        S.jobs = res[0]; S.overview = res[1];
+        if (!S.jobWeekPicked) { // first visit: open the first week that has jobs
+          S.jobWeekPicked = true;
+          var wks = weeks(S.jobs.dates);
+          for (var i = 0; i < wks.length; i++) if (jobsInWeek(wks[i]).length) { S.jobWeek = i; break; }
+        }
+        render();
+      }).catch(showErr);
+    }
     if (view === 'staff') {
       return api('adminListStaff').then(function (d) { S.staff = d.staff; render(); }).catch(showErr);
     }
@@ -256,6 +287,7 @@
 
     var v = S.view;
     if (v === 'mine') html += viewMine();
+    else if (v === 'jobs') html += viewJobs();
     else if (v === 'grid') html += viewGrid();
     else if (v === 'free') html += viewFree();
     else if (v === 'gaps') html += viewGaps();
@@ -270,8 +302,9 @@
     root.querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { go(b.getAttribute('data-go')); }; });
     if (v === 'mine') bindMine();
     if (v === 'grid') bindGrid();
+    if (v === 'jobs') bindJobs();
     if (v === 'free') bindFree();
-    if (v === 'gaps' || v === 'conflicts' || v === 'grid') bindSync();
+    if (v === 'gaps' || v === 'conflicts' || v === 'grid' || v === 'jobs') bindSync();
     if (v === 'staff') bindStaff();
     if (v === 'account') bindAccount();
   }
@@ -349,9 +382,21 @@
     return keys().some(function (k) { return bk[k] || dr[k] === true || dr[k] === false; });
   }
 
+  // Weeks run Monday to Sunday. The first week may be partial (starts today).
+  function addDay(ymd, n) { var d = d8(ymd); d.setDate(d.getDate() + n); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  // Full Monday to Sunday list for a week, including days before today (shown as past).
+  function fullWeek(wk) {
+    var out = wk.slice();
+    while (d8(out[0]).getDay() !== 1) out.unshift(addDay(out[0], -1));
+    return out;
+  }
+
   function weeks(dates) {
     var out = [];
-    for (var i = 0; i < dates.length; i += 7) out.push(dates.slice(i, i + 7));
+    dates.forEach(function (d) {
+      if (!out.length || d8(d).getDay() === 1) out.push([]);
+      out[out.length - 1].push(d);
+    });
     return out;
   }
 
@@ -362,7 +407,8 @@
       'Morning is 9am to 6pm, Evening is 6pm to 12am.' +
       (unfilled ? ' <span class="tag unfilled">' + unfilled + ' days not filled</span>' : '') + '</p>';
     weeks(S.mine.dates).forEach(function (wk, wi) {
-      html += '<section class="card week"><div class="week-head"><h2>' + fmtDM(wk[0]) + ' to ' + fmtDM(wk[wk.length - 1]) + '</h2>' +
+      var range = wk.length === 1 ? fmtDay(wk[0]) + ' ' + fmtDM(wk[0]) : fmtDM(wk[0]) + ' to ' + fmtDM(wk[wk.length - 1]);
+      html += '<section class="card week"><div class="week-head"><h2>' + (wi === 0 ? 'This week: ' : '') + range + '</h2>' +
         '<div class="quick"><button class="btn ghost small" data-q="evening" data-w="' + wi + '">All evenings available</button>' +
         '<button class="btn ghost small" data-q="all" data-w="' + wi + '">All day available</button>' +
         '<button class="btn ghost small" data-q="rest" data-w="' + wi + '">Rest not available</button>' +
@@ -454,6 +500,155 @@
     return a[k] ? 'a' : 'n';
   }
 
+  // ------------------------------------------------------------ admin: jobs
+  function fmtTime(hm) {
+    var h = +hm.slice(0, 2), m = hm.slice(3, 5);
+    return ((h % 12) || 12) + (m === '00' ? '' : ':' + m) + (h < 12 ? 'am' : 'pm');
+  }
+  function jobCounts(j) {
+    var acc = 0, wait = 0;
+    j.staff.forEach(function (x) { if (x.status === 'accepted') acc++; else if (x.status !== 'declined') wait++; });
+    return { acc: acc, wait: wait };
+  }
+  function jobPill(j) {
+    var c = jobCounts(j);
+    if (c.acc >= j.needed) return '<span class="st ok">' + c.acc + ' of ' + j.needed + ' accepted</span>';
+    if (c.acc + c.wait >= j.needed) return '<span class="st wa">' + (c.acc ? c.acc + ' accepted, ' : '') + c.wait + ' awaiting reply</span>';
+    return '<span class="st dg">' + (c.acc + c.wait) + ' of ' + j.needed + ' allocated</span>';
+  }
+  function jobsInWeek(wk) {
+    var set = {}; wk.forEach(function (d) { set[d] = true; });
+    return S.jobs.jobs.filter(function (j) { return set[j.date]; });
+  }
+  function slotText(j) {
+    if (!j.slots.length) return 'Outside roster hours';
+    var seen = {}, out = [];
+    j.slots.forEach(function (x) { if (!seen[x.block]) { seen[x.block] = 1; out.push(blockLabel(x.block)); } });
+    return out.join(', ');
+  }
+
+  function viewJobs() {
+    if (!S.jobs || !S.overview) return '<h1>Jobs</h1><div class="card"><p class="empty">Loading jobs...</p></div>';
+    var wks = weeks(S.jobs.dates);
+    if (S.jobWeek >= wks.length) S.jobWeek = 0;
+    var list = jobsInWeek(wks[S.jobWeek]);
+    var short = list.filter(function (j) { var c = jobCounts(j); return c.acc + c.wait < j.needed; }).length;
+    var html = '<h1>Jobs</h1>' + syncBar() +
+      '<div class="toolbar"><div class="chips">' + wks.map(function (w, i) {
+        var n = jobsInWeek(w).length;
+        return '<button class="chip' + (i === S.jobWeek ? ' on' : '') + '" data-jw="' + i + '">' + (i === 0 ? 'This week' : 'w/c ' + fmtDM(w[0])) + (n ? ' (' + n + ')' : '') + '</button>';
+      }).join('') + '</div></div>' +
+      '<p class="sub">' + list.length + ' job' + (list.length === 1 ? '' : 's') + (short ? ', <strong style="color:var(--warn)">' + short + ' need' + (short === 1 ? 's' : '') + ' staff</strong>' : '') +
+      (S.jobs.hidden ? '. ' + S.jobs.hidden + ' check-ins, training sessions and reminders hidden.' : '.') + ' Tap a job to allocate staff.</p>';
+    if (!list.length) return html + '<div class="card"><p class="empty">No jobs in the bookings calendar this week.</p></div>';
+    list.forEach(function (j) {
+      var open = S.openJob === j.id;
+      var time = j.allDay ? 'All day' : fmtTime(j.startTime) + ' to ' + fmtTime(j.endTime);
+      html += '<div class="job' + (open ? ' open' : '') + '" data-job="' + esc(j.id) + '"><div class="when">' + fmtDay(j.date) + ' ' + fmtDM(j.date) +
+        '<small>' + slotText(j) + '</small></div><div><div class="t">' + esc(j.title) + '</div><div class="meta">' + time +
+        (j.location ? ' · ' + esc(j.location) : '') + ' · ' + (j.services.length ? esc(j.services.join(', ')) : 'No service listed') + ' · needs ' + j.needed + '</div>' +
+        (j.serviceFound ? '' : '<div class="warnline">No "Services:" line found in the event details, so this job needs 1 by default.</div>') +
+        '</div><div>' + jobPill(j) + '</div></div>';
+      if (open) html += allocPanel(j, wks[S.jobWeek]);
+    });
+    return html;
+  }
+
+  function staffJobsThisWeek(email, wk) {
+    return jobsInWeek(wk).filter(function (j) {
+      return j.staff.some(function (x) { return x.email === email && x.status !== 'declined'; });
+    }).length;
+  }
+
+  function allocPanel(j, wk) {
+    var o = S.overview;
+    var statusTxt = { accepted: ['ok', 'Accepted'], invited: ['wa', 'Invite sent, awaiting reply'], maybe: ['wa', 'Replied maybe'], declined: ['dg', 'Declined'] };
+    var html = '<div class="alloc"><h3>Allocated</h3>';
+    if (!j.staff.length) html += '<div class="arow"><small>Nobody yet.</small></div>';
+    j.staff.forEach(function (x) {
+      var key = j.id + '|' + x.email, st = statusTxt[x.status] || statusTxt.invited;
+      html += '<div class="arow"><span>' + esc(x.name) + '</span><span style="display:flex;gap:8px;align-items:center"><span class="st ' + st[0] + '">' + st[1] + '</span>' +
+        (x.status === 'declined' ? '<button class="btn ghost small" data-alloc="' + esc(x.email) + '">Invite again</button>' : '') +
+        '<button class="btn ghost small" data-rm="' + esc(x.email) + '">' + (S.confirmRemove === key ? 'Confirm remove' : 'Remove') + '</button></span></div>';
+    });
+
+    var taken = {}; j.staff.forEach(function (x) { taken[x.email] = true; });
+    var pool = o.staff.filter(function (s) { return !taken[s.email]; });
+    var filtered = j.skills.length && !S.jobShowAll;
+    if (filtered) pool = pool.filter(function (s) { return s.skills.some(function (k) { return j.skills.indexOf(k) >= 0; }); });
+
+    var full = [], part = [], other = [];
+    pool.forEach(function (s) {
+      var free = [], reason = '';
+      j.slots.forEach(function (x) {
+        var b = ((o.booked[s.email] || {})[x.date] || {})[x.block];
+        var a = ((o.avail[s.email] || {})[x.date] || {})[x.block];
+        if (b && b.eventId !== j.iCalUID) { reason = reason || 'Booked: ' + b.title; return; }
+        if (a === true) free.push(x.block); else reason = reason || (a === false ? 'Not available' : 'Not set');
+      });
+      var item = { s: s, n: staffJobsThisWeek(s.email, wk), reason: reason, free: free };
+      if (!j.slots.length) part.push(item);
+      else if (free.length === j.slots.length) full.push(item);
+      else if (free.length) part.push(item);
+      else other.push(item);
+    });
+    var byLoad = function (a, b) { return a.n - b.n || a.s.name.localeCompare(b.s.name); };
+    full.sort(byLoad); part.sort(byLoad); other.sort(function (a, b) { return a.s.name.localeCompare(b.s.name); });
+    var row = function (it, btn) {
+      return '<div class="arow"><span>' + esc(it.s.name) + ' <small>' + esc(it.s.skills.join(', ') || 'No booth types') + ' · ' + it.n + ' job' + (it.n === 1 ? '' : 's') + ' this week' +
+        (it.reason && btn ? ' · ' + esc(it.reason) : '') + '</small></span>' +
+        (btn ? '<button class="btn small" data-alloc="' + esc(it.s.email) + '">Allocate</button>' : '<small>' + esc(it.reason) + '</small>') + '</div>';
+    };
+
+    if (j.skills.length) html += '<div class="toolbar" style="margin:12px 0 0"><span class="sub" style="margin:0">' + (filtered ? 'Showing staff tagged ' + esc(j.skills.join(' or ')) + '.' : 'Showing all staff.') +
+      '</span><button class="linkbtn" id="jall">' + (filtered ? 'Show all staff' : 'Only ' + esc(j.skills.join(' or '))) + '</button></div>';
+    if (!j.slots.length) {
+      html += '<h3>Outside roster hours, check with staff first</h3>' + (part.map(function (it) { return row(it, true); }).join('') || '<div class="arow"><small>Nobody to show.</small></div>');
+    } else {
+      html += '<h3>Available for the whole job (' + full.length + ')</h3>' + (full.map(function (it) { return row(it, true); }).join('') || '<div class="arow"><small>Nobody is free for every slot of this job.</small></div>');
+      if (part.length) html += '<h3>Available for part of the job (' + part.length + ')</h3>' + part.map(function (it) {
+        it.reason = 'Free ' + it.free.map(blockLabel).join(', ').toLowerCase() + ' only'; return row(it, true); }).join('');
+    }
+    if (other.length) {
+      html += '<h3>Not available, booked or not set (' + other.length + ') <button class="linkbtn" id="jothers" style="text-transform:none;letter-spacing:0">' + (S.showOthers ? 'Hide' : 'Show') + '</button></h3>';
+      if (S.showOthers) html += other.map(function (it) { return row(it, false); }).join('');
+    }
+    return html + '<p class="sub" style="margin:12px 0 0">Allocate adds them as a guest on the calendar event. Google emails them the invite. They show as Booked once they click Yes.</p></div>';
+  }
+
+  function bindJobs() {
+    if (!S.jobs) return;
+    document.querySelectorAll('[data-jw]').forEach(function (b) { b.onclick = function () { S.jobWeekPicked = true; S.jobWeek = +b.getAttribute('data-jw'); S.openJob = null; render(); }; });
+    document.querySelectorAll('[data-job]').forEach(function (b) {
+      b.onclick = function () { var id = b.getAttribute('data-job'); S.openJob = S.openJob === id ? null : id; S.confirmRemove = ''; S.showOthers = false; S.jobShowAll = false; keepScroll(render); };
+    });
+    var job = S.jobs.jobs.filter(function (j) { return j.id === S.openJob; })[0];
+    if (!job) return;
+    var all = $('#jall'); if (all) all.onclick = function () { S.jobShowAll = !S.jobShowAll; keepScroll(render); };
+    var oth = $('#jothers'); if (oth) oth.onclick = function () { S.showOthers = !S.showOthers; keepScroll(render); };
+    var nameOf = function (email) { var s = S.overview.staff.filter(function (x) { return x.email === email; })[0]; return s ? s.name : email; };
+    document.querySelectorAll('[data-alloc]').forEach(function (b) {
+      b.onclick = function () {
+        var email = b.getAttribute('data-alloc');
+        api('adminAllocate', { eventId: job.id, email: email }).then(function (r) {
+          toast(r.already ? nameOf(email) + ' is already on this job' : 'Invite sent to ' + nameOf(email));
+          return load('jobs');
+        }).catch(showErr);
+      };
+    });
+    document.querySelectorAll('[data-rm]').forEach(function (b) {
+      b.onclick = function () {
+        var email = b.getAttribute('data-rm'), key = job.id + '|' + email;
+        if (S.confirmRemove !== key) { S.confirmRemove = key; return keepScroll(render); }
+        S.confirmRemove = '';
+        api('adminUnallocate', { eventId: job.id, email: email }).then(function () {
+          toast(nameOf(email) + ' removed and emailed');
+          return load('jobs');
+        }).catch(showErr);
+      };
+    });
+  }
+
   // ------------------------------------------------------------ admin: grid
   function viewGrid() {
     var o = S.overview;
@@ -462,14 +657,17 @@
     var staff = staffFiltered(S.gridSkill);
     var html = '<h1>Availability grid</h1>' + syncBar() +
       '<div class="toolbar"><div class="chips">' + wks.map(function (w, i) {
-        return '<button class="chip' + (i === S.gridWeek ? ' on' : '') + '" data-wk="' + i + '">' + fmtDM(w[0]) + '</button>'; }).join('') +
+        return '<button class="chip' + (i === S.gridWeek ? ' on' : '') + '" data-wk="' + i + '">' + (i === 0 ? 'This week' : 'w/c ' + fmtDM(w[0])) + '</button>'; }).join('') +
       '</div>' + skillSelect('gskill', S.gridSkill) + '</div>';
     if (!staff.length) return html + '<div class="card"><p class="empty">No rostered staff yet. Add them on the Staff tab.</p></div>';
+    var inWin = {}; o.dates.forEach(function (d) { inWin[d] = true; });
+    wk = fullWeek(wk);
     html += '<div class="gridwrap"><table class="grid"><thead><tr><th>Staff</th>' + wk.map(function (d) {
-      return '<th class="' + (isWeekend(d) ? 'wk' : '') + '">' + fmtDay(d) + '<br>' + fmtDM(d) + '</th>'; }).join('') + '</tr></thead><tbody>';
+      return '<th class="' + (isWeekend(d) ? 'wk' : '') + '"' + (inWin[d] ? '' : ' style="opacity:.4"') + '>' + fmtDay(d) + '<br>' + fmtDM(d) + '</th>'; }).join('') + '</tr></thead><tbody>';
     staff.forEach(function (s) {
       html += '<tr><td><strong>' + esc(s.name) + '</strong><br><span class="sub" style="font-size:11px">' + esc(s.skills.join(', ')) + '</span></td>';
       wk.forEach(function (d) {
+        if (!inWin[d]) { html += '<td><span class="sub" style="font-size:11px">Past</span></td>'; return; }
         html += '<td><div class="cells">' + keys().map(function (k) {
           var st = state(s.email, d, k);
           var bk = ((o.booked[s.email] || {})[d] || {})[k];
