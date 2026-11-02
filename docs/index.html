@@ -98,6 +98,7 @@
   .chips { display: flex; gap: 6px; overflow-x: auto; }
   .chip { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 6px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
   .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .gapdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--gold); vertical-align: middle; margin-left: 2px; }
   .gridwrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }
   table.grid { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 760px; font-size: 12px; }
   table.grid th, table.grid td { border-bottom: 1px solid var(--line); padding: 6px; text-align: center; }
@@ -173,7 +174,7 @@
     user: null,
     config: { appName: 'Roster', skills: [], blocks: [
       { key: 'morning', label: 'Morning' }, { key: 'evening', label: 'Evening' }] },
-    view: '', refreshing: 0, booting: false,
+    view: '', refreshing: 0, booting: false, mineWeek: 0,
     mine: null, draft: {}, dirty: false,
     overview: null, staff: null,
     jobs: null, jobWeek: 0, openJob: null, jobShowAll: false, confirmRemove: '', confirmAnyway: '', showOthers: false,
@@ -432,7 +433,16 @@
     var html = '<h1>My availability</h1><p class="sub">Tap a slot to switch between Available, Not available and Not set. ' +
       'Morning is 9am to 6pm, Evening is 6pm to 12am.' +
       (unfilled ? ' <span class="tag unfilled">' + unfilled + ' days not filled</span>' : '') + '</p>';
-    weeks(S.mine.dates).forEach(function (wk, wi) {
+    var wks = weeks(S.mine.dates);
+    if (S.mineWeek >= wks.length) S.mineWeek = 0;
+    // Week picker, same as the admin grid. A gold dot marks weeks with days not filled.
+    html += '<div class="toolbar"><div class="chips">' + wks.map(function (w, i) {
+      var gaps = w.some(function (d) { return !dayFilled(d); });
+      return '<button class="chip' + (i === S.mineWeek ? ' on' : '') + '" data-mw="' + i + '">' + (i === 0 ? 'This week' : 'w/c ' + fmtDM(w[0])) +
+        (gaps ? ' <span class="gapdot" title="Days not filled"></span>' : '') + '</button>';
+    }).join('') + '</div></div>';
+    wks.forEach(function (wk, wi) {
+      if (wi !== S.mineWeek) return;
       var range = wk.length === 1 ? fmtDay(wk[0]) + ' ' + fmtDM(wk[0]) : fmtDM(wk[0]) + ' to ' + fmtDM(wk[wk.length - 1]);
       html += '<section class="card week"><div class="week-head"><h2>' + (wi === 0 ? 'This week: ' : '') + range + '</h2>' +
         '<div class="quick"><button class="btn ghost small" data-q="evening" data-w="' + wi + '">All evenings available</button>' +
@@ -456,6 +466,9 @@
         });
         html += '</div></div>';
       });
+      html += '<div class="toolbar" style="justify-content:space-between;margin:12px 0 0">' +
+        (wi > 0 ? '<button class="btn ghost small" data-mw="' + (wi - 1) + '">Previous week</button>' : '<span></span>') +
+        (wi < wks.length - 1 ? '<button class="btn ghost small" data-mw="' + (wi + 1) + '">Next week</button>' : '<span></span>') + '</div>';
       html += '</section>';
     });
     if (S.mine.lastSync) html += '<p class="sub">Booked jobs last updated ' + esc(fmtStamp(S.mine.lastSync)) + '.</p>';
@@ -464,6 +477,9 @@
 
   function bindMine() {
     if (!S.mine) return;
+    document.querySelectorAll('[data-mw]').forEach(function (b) {
+      b.onclick = function () { S.mineWeek = +b.getAttribute('data-mw'); render(); window.scrollTo(0, 0); };
+    });
     document.querySelectorAll('.slot[data-d]').forEach(function (b) {
       b.onclick = function () {
         var d = b.getAttribute('data-d'), k = b.getAttribute('data-b');
