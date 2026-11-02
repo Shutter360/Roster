@@ -538,6 +538,7 @@
   }
   function jobPill(j) {
     var c = jobCounts(j);
+    if (!j.needed && !j.staff.length) return '<span class="st mu">No staff needed</span>';
     if (c.acc >= j.needed) return '<span class="st ok">' + c.acc + ' of ' + j.needed + ' accepted</span>';
     if (c.acc + c.wait >= j.needed) return '<span class="st wa">' + (c.acc ? c.acc + ' accepted, ' : '') + c.wait + ' awaiting reply</span>';
     return '<span class="st dg">' + (c.acc + c.wait) + ' of ' + j.needed + ' allocated</span>';
@@ -572,7 +573,7 @@
       var time = j.allDay ? 'All day' : fmtTime(j.startTime) + ' to ' + fmtTime(j.endTime);
       html += '<div class="job' + (open ? ' open' : '') + '" data-job="' + esc(j.id) + '"><div class="when">' + fmtDay(j.date) + ' ' + fmtDM(j.date) +
         '<small>' + slotText(j) + '</small></div><div><div class="t">' + esc(j.title) + '</div><div class="meta">' + time +
-        (j.location ? ' · ' + esc(j.location) : '') + ' · ' + (j.services.length ? esc(j.services.join(', ')) : 'No service listed') + ' · needs ' + j.needed + '</div>' +
+        (j.location ? ' · ' + esc(j.location) : '') + ' · ' + (j.services.length ? esc(j.services.join(', ')) : 'No service listed') + (j.needed ? ' · needs ' + j.needed : '') + '</div>' +
         (j.serviceFound ? '' : '<div class="warnline">No "Services:" line found in the event details, so this job needs 1 by default.</div>') +
         '</div><div>' + jobPill(j) + '</div></div>';
       if (open) html += allocPanel(j, wks[S.jobWeek]);
