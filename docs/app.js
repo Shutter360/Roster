@@ -98,7 +98,8 @@
   // ------------------------------------------------------------ routing
   function tabsFor(user) {
     if (user.role === 'admin') {
-      var t = [['jobs', 'Jobs'], ['schedule', 'Work schedule'], ['grid', 'Availability grid'], ['free', "Who's free"], ['gaps', 'Gaps'], ['conflicts', 'Conflicts'], ['staff', 'Staff']];
+      // Gaps and Conflicts views are still in this file, just hidden from the menu. Add ['gaps', 'Gaps'], ['conflicts', 'Conflicts'] back here to show them.
+      var t = [['jobs', 'Jobs'], ['schedule', 'Work schedule'], ['grid', 'Availability grid'], ['free', "Who's free"], ['staff', 'Staff']];
       if (user.rostered) t.push(['mine', 'My availability']);
       t.push(['account', 'Account']);
       return t;
