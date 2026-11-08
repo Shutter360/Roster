@@ -449,14 +449,14 @@
 
   function allocPanel(j, wk) {
     var o = S.overview;
-    var statusTxt = { accepted: ['ok', 'Accepted'], invited: ['wa', 'Invite sent, awaiting reply'], maybe: ['wa', 'Replied maybe'], declined: ['dg', 'Declined'] };
+    var statusTxt = { accepted: ['ok', 'Accepted'], invited: ['wa', 'Invite sent, awaiting reply'], maybe: ['wa', 'Replied maybe'], declined: ['dg', 'Declined, taken off the invite'] };
     var html = '<div class="alloc"><h3>Allocated</h3>';
     if (!j.staff.length) html += '<div class="arow"><small>Nobody yet.</small></div>';
     j.staff.forEach(function (x) {
       var key = j.id + '|' + x.email, st = statusTxt[x.status] || statusTxt.invited;
       html += '<div class="arow"><span>' + esc(x.name) + '</span><span style="display:flex;gap:8px;align-items:center"><span class="st ' + st[0] + '">' + st[1] + '</span>' +
-        (x.status === 'declined' ? '<button class="btn ghost small" data-alloc="' + esc(x.email) + '">Invite again</button>' : '') +
-        '<button class="btn ghost small" data-rm="' + esc(x.email) + '">' + (S.confirmRemove === key ? 'Confirm remove' : 'Remove') + '</button></span></div>';
+        (x.status === 'declined' ? '<button class="btn ghost small" data-alloc="' + esc(x.email) + '">Invite again</button>'
+          : '<button class="btn ghost small" data-rm="' + esc(x.email) + '">' + (S.confirmRemove === key ? 'Confirm remove' : 'Remove') + '</button>') + '</span></div>';
     });
 
     var taken = {}; j.staff.forEach(function (x) { taken[x.email] = true; });
@@ -503,7 +503,8 @@
       if (S.showOthers) html += '<div class="arow"><small>You can still allocate anyone here, for example someone you removed earlier. Check with them first, as their availability doesn\'t match this job.</small></div>' +
         other.map(function (it) { return row(it, false); }).join('');
     }
-    return html + '<p class="sub" style="margin:12px 0 0">Allocate adds them as a guest on the calendar event, so Google sends them an invite, and the app emails them the job details too. They show as Booked once they click Yes.</p></div>';
+    return html + '<p class="sub" style="margin:12px 0 0">Allocate adds them as a guest on the calendar event, so Google sends them an invite, and the app emails them the job details too. They show as Booked once they click Yes. ' +
+      'If they click No, the app takes them off the invite within 15 minutes. Remove takes them off the invite, and Google and the app both email them.</p></div>';
   }
 
   function bindJobs() {
@@ -542,8 +543,8 @@
         var email = b.getAttribute('data-rm'), key = job.id + '|' + email;
         if (S.confirmRemove !== key) { S.confirmRemove = key; return keepScroll(render); }
         S.confirmRemove = '';
-        api('adminUnallocate', { eventId: job.id, email: email }).then(function () {
-          toast(nameOf(email) + ' removed and emailed');
+        api('adminUnallocate', { eventId: job.id, email: email }).then(function (r) {
+          toast(r.removed ? nameOf(email) + ' taken off the invite and emailed' : nameOf(email) + ' was already off this job');
           return load('jobs');
         }).catch(showErr);
       };
