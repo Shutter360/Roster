@@ -413,6 +413,13 @@
     j.slots.forEach(function (x) { if (!seen[x.block]) { seen[x.block] = 1; out.push(blockLabel(x.block)); } });
     return out.join(', ');
   }
+  // Events left off the Jobs tab: hidden titles, and events with no "Services:" line.
+  function hiddenNote() {
+    var parts = [];
+    if (S.jobs.hidden) parts.push(S.jobs.hidden + ' check-ins, training sessions and reminders');
+    if (S.jobs.noServices) parts.push(S.jobs.noServices + ' event' + (S.jobs.noServices === 1 ? '' : 's') + ' with no Services line');
+    return parts.length ? '. Not shown: ' + parts.join(', ') + '.' : '.';
+  }
 
   function viewJobs() {
     if (!S.jobs || !S.overview) return '<h1>Jobs</h1><div class="card"><p class="empty">Loading jobs...</p></div>';
@@ -426,7 +433,7 @@
         return '<button class="chip' + (i === S.jobWeek ? ' on' : '') + '" data-jw="' + i + '">' + (i === 0 ? 'This week' : 'w/c ' + fmtDM(w[0])) + (n ? ' (' + n + ')' : '') + '</button>';
       }).join('') + '</div></div>' +
       '<p class="sub">' + list.length + ' job' + (list.length === 1 ? '' : 's') + (short ? ', <strong style="color:var(--warn)">' + short + ' need' + (short === 1 ? 's' : '') + ' staff</strong>' : '') +
-      (S.jobs.hidden ? '. ' + S.jobs.hidden + ' check-ins, training sessions and reminders hidden.' : '.') + ' Tap a job to allocate staff.</p>';
+      hiddenNote() + ' Tap a job to allocate staff.</p>';
     if (!list.length) return html + '<div class="card"><p class="empty">No jobs in the bookings calendar this week.</p></div>';
     list.forEach(function (j) {
       var open = S.openJob === j.id;
@@ -434,7 +441,7 @@
       html += '<div class="job' + (open ? ' open' : '') + '" data-job="' + esc(j.id) + '"><div class="when">' + fmtDay(j.date) + ' ' + fmtDM(j.date) +
         '<small>' + slotText(j) + '</small></div><div><div class="t">' + esc(j.title) + '</div><div class="meta">' + time +
         (j.location ? ' · ' + esc(j.location) : '') + ' · ' + (j.services.length ? esc(j.services.join(', ')) : 'No service listed') + (j.needed ? ' · needs ' + j.needed : '') + '</div>' +
-        (j.serviceFound ? '' : '<div class="warnline">No "Services:" line found in the event details, so this job needs 1 by default.</div>') +
+        (j.serviceFound ? '' : '<div class="warnline">No booth type recognised in the "Services:" line, so all staff are shown.</div>') +
         '</div><div>' + jobPill(j) + '</div></div>';
       if (open) html += allocPanel(j, wks[S.jobWeek]);
     });
